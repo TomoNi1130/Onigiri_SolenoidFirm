@@ -1,21 +1,21 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.h
-  * @brief          : Header for main.c file.
-  *                   This file contains the common defines of the application.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.h
+ * @brief          : Header for main.c file.
+ *                   This file contains the common defines of the application.
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2026 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
@@ -50,7 +50,7 @@ extern "C" {
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
-void Error_Handler(void);
+void Error_Handler (void);
 
 /* USER CODE BEGIN EFP */
 
@@ -65,18 +65,18 @@ void Error_Handler(void);
 #define A_2_GPIO_Port GPIOA
 #define A_3_Pin GPIO_PIN_3
 #define A_3_GPIO_Port GPIOA
-#define B_0_Pin GPIO_PIN_4
-#define B_0_GPIO_Port GPIOA
-#define B_1_Pin GPIO_PIN_5
-#define B_1_GPIO_Port GPIOA
-#define B_2_Pin GPIO_PIN_6
-#define B_2_GPIO_Port GPIOA
-#define B_4_Pin GPIO_PIN_7
-#define B_4_GPIO_Port GPIOA
+#define A_4_Pin GPIO_PIN_4
+#define A_4_GPIO_Port GPIOA
+#define A_5_Pin GPIO_PIN_5
+#define A_5_GPIO_Port GPIOA
+#define A_6_Pin GPIO_PIN_6
+#define A_6_GPIO_Port GPIOA
+#define A_7_Pin GPIO_PIN_7
+#define A_7_GPIO_Port GPIOA
 #define CAN_State_Pin GPIO_PIN_8
 #define CAN_State_GPIO_Port GPIOA
-#define IDSet_Pin GPIO_PIN_5
-#define IDSet_GPIO_Port GPIOB
+#define IDset_Pin GPIO_PIN_5
+#define IDset_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

@@ -1,0 +1,17 @@
+Language: Cpp                               # C++
+BasedOnStyle: Google                        # Googleの思想
+ColumnLimit: 1000                            # 1行の最大文字数
+IndentWidth: 2                              # インデント幅
+
+SpaceBeforeParens: Always                   # () の前にスペース
+AlignAfterOpenBracket: AlwaysBreak          # 引数リストのカンマを改行する
+AlignArrayOfStructures: Right               # 構造体の配列を右揃え
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false         # 連続する宣言を揃えるかどうか
+AlignEscapedNewlines: Left                  # エスケープされた改行を左揃え
+AlignTrailingComments: true                 # コメントを揃える
+AllowShortEnumsOnASingleLine: false         # enumを改行
+AllowShortFunctionsOnASingleLine: Empty     # 短い関数を一行にしない
+BreakBeforeBraces: Attach                   # {}を改行しない
+PointerAlignment: Right                     # ポインターの"*"、"&"は変数宣言の左に記述する
+AllowShortCaseLabelsOnASingleLine: false    # case文を改行
