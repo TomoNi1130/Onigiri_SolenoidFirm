@@ -34,6 +34,8 @@
 
 #define BASE_CANID 128
 #define SOLENOID_PINS (A_0_Pin | A_1_Pin | A_2_Pin | A_3_Pin | A_4_Pin | A_5_Pin | A_6_Pin | A_7_Pin)
+#define CAN_TIMEOUT_MS 250U
+#define CAN_RECOVERY_INTERVAL_MS 100U
 #define ERROR_BLINK_COUNT 3U
 #define ERROR_BLINK_DELAY_CYCLES 800000UL
 
@@ -61,8 +63,11 @@ static void MX_USART1_UART_Init (void);
 
 /* USER CODE BEGIN PFP */
 
-void CAN_Start (CAN_HandleTypeDef *hcan);
+uint8_t CAN_Start (CAN_HandleTypeDef *hcan);
 uint8_t CAN_Send (CAN_HandleTypeDef *hcan, uint32_t id, uint8_t *data, uint8_t len);
+static uint8_t CAN_Recover (CAN_HandleTypeDef *hcan);
+static uint8_t CAN_IsOnline (uint32_t now);
+static void CAN_UpdateStatePin (uint8_t online);
 static void Error_SetSafeOutputs (void);
 static void Error_BlinkAndReset (void);
 static void Error_Delay (void);
@@ -72,8 +77,12 @@ static void Error_Delay (void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-static uint8_t input_state = 0b00000000;
+static volatile uint8_t input_state = 0b00000000;
 static uint8_t canid = BASE_CANID;
+static volatile uint8_t can_rx_seen = 0;
+static volatile uint8_t can_recover_requested = 0;
+static volatile uint32_t last_can_rx_tick = 0;
+static uint32_t last_can_recovery_tick = 0;
 
 /* USER CODE END 0 */
 
@@ -108,9 +117,8 @@ int main (void) {
   MX_USART1_UART_Init ();
   /* USER CODE BEGIN 2 */
 
-  CAN_Start (&hcan);
-
   canid = BASE_CANID + !HAL_GPIO_ReadPin (GPIOB, IDset_Pin);
+  (void)CAN_Start (&hcan);
 
   /* USER CODE END 2 */
 
@@ -121,13 +129,23 @@ int main (void) {
 
     /* USER CODE BEGIN 3 */
 
+    uint32_t now = HAL_GetTick ();
+    uint8_t can_online = CAN_IsOnline (now);
+
+    if ((can_recover_requested != 0) ||
+        ((HAL_CAN_GetState (&hcan) != HAL_CAN_STATE_LISTENING) && ((now - last_can_recovery_tick) >= CAN_RECOVERY_INTERVAL_MS))) {
+      can_recover_requested = 0;
+      last_can_recovery_tick = now;
+      (void)CAN_Recover (&hcan);
+    }
+
+    CAN_UpdateStatePin (can_online);
+
     // ソレノイドの制御
     uint8_t sol_state = input_state;
     for (int i = 0; i < 8; i++) {
       HAL_GPIO_WritePin (GPIOA, GPIO_PIN_0 << i, (sol_state >> i) & 1);
     }
-
-    // CANのステータスLEDの制御
   }
   /* USER CODE END 3 */
 }
@@ -272,7 +290,7 @@ static void MX_GPIO_Init (void) {
 
 /* USER CODE BEGIN 4 */
 
-void CAN_Start (CAN_HandleTypeDef *hcan) {
+uint8_t CAN_Start (CAN_HandleTypeDef *hcan) {
   CAN_FilterTypeDef can_filter = {0};
   can_filter.FilterMode = CAN_FILTERMODE_IDMASK;
   can_filter.FilterScale = CAN_FILTERSCALE_32BIT;
@@ -291,16 +309,18 @@ void CAN_Start (CAN_HandleTypeDef *hcan) {
   }
 
   if (HAL_CAN_ConfigFilter (hcan, &can_filter) != HAL_OK) {
-    Error_Handler ();
+    return 1;
   }
 
   if (HAL_CAN_Start (hcan) != HAL_OK) {
-    Error_Handler ();
+    return 1;
   }
 
-  if (HAL_CAN_ActivateNotification (hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {
-    Error_Handler ();
+  if (HAL_CAN_ActivateNotification (hcan, CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO0_OVERRUN | CAN_IT_ERROR | CAN_IT_BUSOFF) != HAL_OK) {
+    return 1;
   }
+
+  return 0;
 }
 
 uint8_t CAN_Send (CAN_HandleTypeDef *hcan, uint32_t id, uint8_t *data, uint8_t len) {
@@ -328,13 +348,41 @@ void HAL_CAN_RxFifo0MsgPendingCallback (CAN_HandleTypeDef *hcan) {  // CANのコ
   if (HAL_CAN_GetRxMessage (hcan, CAN_RX_FIFO0, &rx_header, rx_data) != HAL_OK) return;
 
   if (rx_header.StdId != canid) return;
+  if (rx_header.IDE != CAN_ID_STD) return;
+  if (rx_header.RTR != CAN_RTR_DATA) return;
+  if (rx_header.DLC < 1U) return;
+
   input_state = rx_data[0];
+  last_can_rx_tick = HAL_GetTick ();
+  can_rx_seen = 1;
+}
+
+void HAL_CAN_ErrorCallback (CAN_HandleTypeDef *hcan) {
+  if (hcan->Instance != CAN) return;
+
+  can_rx_seen = 0;
+  can_recover_requested = 1;
+  HAL_GPIO_WritePin (CAN_State_GPIO_Port, CAN_State_Pin, GPIO_PIN_RESET);
 }
 
 int __io_putchar (int ch) {
   uint8_t c = (uint8_t)ch;
   (void)HAL_UART_Transmit (&huart1, &c, 1, 10);
   return ch;
+}
+
+static uint8_t CAN_Recover (CAN_HandleTypeDef *hcan) {
+  (void)HAL_CAN_DeactivateNotification (hcan, CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO0_OVERRUN | CAN_IT_ERROR | CAN_IT_BUSOFF);
+  (void)HAL_CAN_Stop (hcan);
+  return CAN_Start (hcan);
+}
+
+static uint8_t CAN_IsOnline (uint32_t now) {
+  return (can_rx_seen != 0) && ((now - last_can_rx_tick) <= CAN_TIMEOUT_MS);
+}
+
+static void CAN_UpdateStatePin (uint8_t online) {
+  HAL_GPIO_WritePin (CAN_State_GPIO_Port, CAN_State_Pin, online ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
 static void Error_SetSafeOutputs (void) {
