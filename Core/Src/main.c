@@ -32,7 +32,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define BASE_CANID 128
+#define BASE_CANID 127
 #define SOLENOID_PINS (A_0_Pin | A_1_Pin | A_2_Pin | A_3_Pin | A_4_Pin | A_5_Pin | A_6_Pin | A_7_Pin)
 
 #define CAN_TIMEOUT_MS 1000U
@@ -123,7 +123,7 @@ int main (void) {
   /* USER CODE BEGIN 2 */
 
   canid = BASE_CANID + !HAL_GPIO_ReadPin (GPIOB, IDset_Pin);
-  (void)CAN_Start (&hcan);
+  if (CAN_Start (&hcan) != HAL_OK) Error_Handler ();
 
   /* USER CODE END 2 */
 
@@ -140,7 +140,7 @@ int main (void) {
     if ((can_recover_requested != 0) || ((HAL_CAN_GetState (&hcan) != HAL_CAN_STATE_LISTENING) && ((now - last_can_recovery_tick) >= CAN_RECOVERY_INTERVAL_MS))) {
       can_recover_requested = 0;
       last_can_recovery_tick = now;
-      (void)CAN_Recover (&hcan);
+      if (CAN_Recover (&hcan) != HAL_OK) Error_Handler ();
     }
 
     CAN_UpdateStatePin (can_online, now);
@@ -277,14 +277,14 @@ static void MX_GPIO_Init (void) {
   /*Configure GPIO pins : A_0_Pin A_1_Pin A_2_Pin A_3_Pin A_4_Pin A_5_Pin A_6_Pin A_7_Pin CAN_State_Pin */
   GPIO_InitStruct.Pin = A_0_Pin | A_1_Pin | A_2_Pin | A_3_Pin | A_4_Pin | A_5_Pin | A_6_Pin | A_7_Pin | CAN_State_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init (GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : IDset_Pin */
   GPIO_InitStruct.Pin = IDset_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init (IDset_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
