@@ -38,7 +38,11 @@
 #define SOLENOID_PINS (A_0_Pin | A_1_Pin | A_2_Pin | A_3_Pin | A_4_Pin | A_5_Pin | A_6_Pin | A_7_Pin)
 
 #define CAN_TEST_ID 1440U
+#define CAN_ENABLE_TEST_TX 0U
+#define CONTROL_HZ 1000U
 #define CAN_TEST_HZ 100U
+#define CAN_RX_TIMEOUT_MS 100U
+#define STATUS_PRINT_MS 500U
 
 #define CAN_STATE_BLINK_HZ 2U
 /* USER CODE END PD */
@@ -65,7 +69,9 @@ static void MX_USART1_UART_Init (void);
 /* USER CODE BEGIN PFP */
 
 static uint8_t CAN_Start (CAN_HandleTypeDef *hcan);
+#if CAN_ENABLE_TEST_TX
 static uint8_t CAN_Send (CAN_HandleTypeDef *hcan, uint32_t id, uint8_t *data, uint8_t len);
+#endif
 static void CAN_UpdateStatePin (uint8_t online, uint32_t now);
 static void Solenoid_Apply (uint8_t sol_state);
 
@@ -76,7 +82,11 @@ static void Solenoid_Apply (uint8_t sol_state);
 
 static volatile uint8_t input_state = 0b00000000;
 static uint8_t canid = BASE_CANID;
-static uint32_t last_can_tx_success_tick = 0;
+static volatile uint8_t can_state = false;  // true -> 接続　false -> 非接続
+static volatile uint32_t last_can_tx_success_tick = 0;
+static volatile uint32_t last_can_rx_tick = 0;
+static volatile uint32_t can_rx_count = 0;
+static volatile uint32_t can_error_count = 0;
 static uint32_t last_can_state_blink_tick = 0;
 static GPIO_PinState can_state_led_state = GPIO_PIN_RESET;
 
@@ -116,19 +126,53 @@ int main (void) {
   canid = BASE_CANID + !HAL_GPIO_ReadPin (GPIOB, IDset_Pin);
   if (CAN_Start (&hcan) != HAL_OK) {
     Solenoid_Apply (0U);
+  } else {
+    printf ("CAN Started with ID: %d\r\n", canid);
   }
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+  uint32_t last_control_tick = HAL_GetTick ();
+#if CAN_ENABLE_TEST_TX
+  uint32_t last_can_test_tick = HAL_GetTick ();
+#endif
+  uint32_t last_status_print_tick = HAL_GetTick ();
+
   printf ("hello world\r\n");
   while (1) {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
     uint32_t now = HAL_GetTick ();
+
+    can_state = ((now - last_can_rx_tick) < CAN_RX_TIMEOUT_MS);
+
+    if (now - last_control_tick >= (1000U / CONTROL_HZ)) {
+      uint8_t sol_state = input_state;
+      last_control_tick = now;
+      Solenoid_Apply (sol_state);
+    }
+
+#if CAN_ENABLE_TEST_TX
+    if (now - last_can_test_tick >= (1000U / CAN_TEST_HZ)) {
+      last_can_test_tick = now;
+      uint8_t tx_data[1] = {canid};
+      CAN_Send (&hcan, CAN_TEST_ID, tx_data, sizeof (tx_data));
+    }
+#endif
+
+    CAN_UpdateStatePin (can_state, now);
+
+    if (now - last_status_print_tick >= STATUS_PRINT_MS) {
+      uint8_t sol_state = input_state;
+      uint32_t rx_count = can_rx_count;
+      uint32_t error_count = can_error_count;
+      last_status_print_tick = now;
+      printf ("can_state: %d, input_state: %02X, rx: %lu, err: %lu\r\n", can_state, sol_state, rx_count, error_count);
+    }
   }
   /* USER CODE END 3 */
 }
@@ -253,12 +297,10 @@ static void MX_GPIO_Init (void) {
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin (GPIOA, A_0_Pin | A_1_Pin | A_2_Pin | A_3_Pin | A_4_Pin | A_5_Pin | A_6_Pin | A_7_Pin | CAN_State_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : A_0_Pin A_1_Pin A_2_Pin A_3_Pin
-                           A_4_Pin A_5_Pin A_6_Pin A_7_Pin
-                           CAN_State_Pin */
+  /*Configure GPIO pins : A_0_Pin A_1_Pin A_2_Pin A_3_Pin A_4_Pin A_5_Pin A_6_Pin A_7_Pin CAN_State_Pin */
   GPIO_InitStruct.Pin = A_0_Pin | A_1_Pin | A_2_Pin | A_3_Pin | A_4_Pin | A_5_Pin | A_6_Pin | A_7_Pin | CAN_State_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init (GPIOA, &GPIO_InitStruct);
 
@@ -274,6 +316,122 @@ static void MX_GPIO_Init (void) {
 }
 
 /* USER CODE BEGIN 4 */
+
+static uint8_t CAN_Start (CAN_HandleTypeDef *hcan) {
+  CAN_FilterTypeDef can_filter = {0};
+  can_filter.FilterMode = CAN_FILTERMODE_IDMASK;
+  can_filter.FilterScale = CAN_FILTERSCALE_32BIT;
+  /* Accept all CAN frames. bxCAN needs an active filter bank to receive. */
+  can_filter.FilterIdHigh = 0x0000;
+  can_filter.FilterIdLow = 0x0000;
+  can_filter.FilterMaskIdHigh = 0x0000;
+  can_filter.FilterMaskIdLow = 0x0000;
+  can_filter.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+  can_filter.FilterActivation = ENABLE;
+  can_filter.SlaveStartFilterBank = 14;
+
+  if (hcan->Instance == CAN) {
+    can_filter.FilterBank = 0;
+  } else {
+    can_filter.FilterBank = 14;
+  }
+
+  if (HAL_CAN_ConfigFilter (hcan, &can_filter) != HAL_OK) {
+    return 1;
+  }
+
+  if (HAL_CAN_Start (hcan) != HAL_OK) {
+    return 1;
+  }
+
+  if (HAL_CAN_ActivateNotification (hcan, CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO0_OVERRUN | CAN_IT_TX_MAILBOX_EMPTY | CAN_IT_ERROR | CAN_IT_BUSOFF) != HAL_OK) {
+    return 1;
+  }
+
+  return 0;
+}
+
+#if CAN_ENABLE_TEST_TX
+static uint8_t CAN_Send (CAN_HandleTypeDef *hcan, uint32_t id, uint8_t *data, uint8_t len) {
+  CAN_TxHeaderTypeDef tx_header;
+  uint32_t tx_mailbox;
+
+  tx_header.StdId = id & 0x7FFU; /* 11bit標準ID */
+  tx_header.ExtId = 0;
+  tx_header.IDE = CAN_ID_STD;
+  tx_header.RTR = CAN_RTR_DATA;
+  tx_header.DLC = len;
+  tx_header.TransmitGlobalTime = DISABLE;
+
+  if (HAL_CAN_AddTxMessage (hcan, &tx_header, data, &tx_mailbox) != HAL_OK) {
+    return 1;
+  }
+  return 0;
+}
+#endif
+
+void HAL_CAN_RxFifo0MsgPendingCallback (CAN_HandleTypeDef *hcan) {  // CANのコールバック
+  CAN_RxHeaderTypeDef rx_header = {0};
+  uint8_t rx_data[8] = {0};
+
+  if (hcan->Instance != CAN) return;
+  if (HAL_CAN_GetRxMessage (hcan, CAN_RX_FIFO0, &rx_header, rx_data) != HAL_OK) return;
+  last_can_rx_tick = HAL_GetTick ();
+  can_rx_count++;
+
+  if (rx_header.StdId != canid) return;
+  input_state = rx_data[0];
+}
+
+int __io_putchar (int ch) {
+  uint8_t c = (uint8_t)ch;
+  (void)HAL_UART_Transmit (&huart1, &c, 1, 10);
+  return ch;
+}
+
+void HAL_CAN_TxMailbox0CompleteCallback (CAN_HandleTypeDef *hcan) {
+  if (hcan->Instance != CAN) return;
+
+  last_can_tx_success_tick = HAL_GetTick ();
+}
+
+void HAL_CAN_TxMailbox1CompleteCallback (CAN_HandleTypeDef *hcan) {
+  if (hcan->Instance != CAN) return;
+
+  last_can_tx_success_tick = HAL_GetTick ();
+}
+
+void HAL_CAN_TxMailbox2CompleteCallback (CAN_HandleTypeDef *hcan) {
+  if (hcan->Instance != CAN) return;
+
+  last_can_tx_success_tick = HAL_GetTick ();
+}
+
+void HAL_CAN_ErrorCallback (CAN_HandleTypeDef *hcan) {
+  if (hcan->Instance != CAN) return;
+
+  can_error_count++;
+}
+
+static void CAN_UpdateStatePin (uint8_t online, uint32_t now) {
+  if (online) {
+    can_state_led_state = GPIO_PIN_SET;
+    HAL_GPIO_WritePin (CAN_State_GPIO_Port, CAN_State_Pin, can_state_led_state);
+    return;
+  }
+
+  if ((now - last_can_state_blink_tick) >= (1000U / CAN_STATE_BLINK_HZ)) {
+    last_can_state_blink_tick = now;
+    can_state_led_state = (can_state_led_state == GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+    HAL_GPIO_WritePin (CAN_State_GPIO_Port, CAN_State_Pin, can_state_led_state);
+  }
+}
+
+static void Solenoid_Apply (uint8_t sol_state) {
+  for (int i = 0; i < 8; i++) {
+    HAL_GPIO_WritePin (GPIOA, GPIO_PIN_0 << i, (sol_state >> i) & 1U);
+  }
+}
 
 /* USER CODE END 4 */
 
