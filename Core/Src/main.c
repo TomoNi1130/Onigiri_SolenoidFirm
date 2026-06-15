@@ -35,7 +35,7 @@
 #define BASE_CANID 127
 #define SOLENOID_PINS (A_0_Pin | A_1_Pin | A_2_Pin | A_3_Pin | A_4_Pin | A_5_Pin | A_6_Pin | A_7_Pin)
 
-#define CAN_TEST_ID 404U
+#define CAN_TEST_ID 1440U
 #define CAN_TEST_INTERVAL_MS 100U
 #define CAN_TIMEOUT_MS 100U
 
@@ -70,6 +70,7 @@ static void MX_USART1_UART_Init (void);
 /* USER CODE BEGIN PFP */
 
 static uint8_t CAN_Start (CAN_HandleTypeDef *hcan);
+static uint8_t CAN_Send (CAN_HandleTypeDef *hcan, uint32_t id, uint8_t *data, uint8_t len);
 static uint8_t CAN_Recover (CAN_HandleTypeDef *hcan);
 static uint8_t CAN_SendTestMessage (CAN_HandleTypeDef *hcan, uint32_t now);
 static void CAN_UpdateStatePin (uint8_t online, uint32_t now);
@@ -350,6 +351,23 @@ static uint8_t CAN_Start (CAN_HandleTypeDef *hcan) {
   return 0;
 }
 
+static uint8_t CAN_Send (CAN_HandleTypeDef *hcan, uint32_t id, uint8_t *data, uint8_t len) {
+  CAN_TxHeaderTypeDef tx_header;
+  uint32_t tx_mailbox;
+
+  tx_header.StdId = id & 0x7FFU; /* 11bit標準ID */
+  tx_header.ExtId = 0;
+  tx_header.IDE = CAN_ID_STD;
+  tx_header.RTR = CAN_RTR_DATA;
+  tx_header.DLC = len;
+  tx_header.TransmitGlobalTime = DISABLE;
+
+  if (HAL_CAN_AddTxMessage (hcan, &tx_header, data, &tx_mailbox) != HAL_OK) {
+    return 1;
+  }
+  return 0;
+}
+
 void HAL_CAN_RxFifo0MsgPendingCallback (CAN_HandleTypeDef *hcan) {  // CANのコールバック
   CAN_RxHeaderTypeDef rx_header = {0};
   uint8_t rx_data[8] = {0};
@@ -360,7 +378,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback (CAN_HandleTypeDef *hcan) {  // CANのコ
   if (rx_header.StdId != canid) return;
   if (rx_header.IDE != CAN_ID_STD) return;
   if (rx_header.RTR != CAN_RTR_DATA) return;
-  if (rx_header.DLC < 1U) return;
+  if ((rx_header.DLC != 1U) && (rx_header.DLC != 8U)) return;
 
   last_command_activity_tick = HAL_GetTick ();
   command_activity_seen = 1;
@@ -387,9 +405,7 @@ int __io_putchar (int ch) {
 }
 
 static uint8_t CAN_SendTestMessage (CAN_HandleTypeDef *hcan, uint32_t now) {
-  CAN_TxHeaderTypeDef tx_header = {0};
   uint8_t tx_data[1] = {canid};
-  uint32_t tx_mailbox = 0;
 
   if ((now - last_can_test_tx_tick) < CAN_TEST_INTERVAL_MS) return 0;
   last_can_test_tx_tick = now;
@@ -399,13 +415,7 @@ static uint8_t CAN_SendTestMessage (CAN_HandleTypeDef *hcan, uint32_t now) {
     return 1;
   }
 
-  tx_header.StdId = CAN_TEST_ID;
-  tx_header.IDE = CAN_ID_STD;
-  tx_header.RTR = CAN_RTR_DATA;
-  tx_header.DLC = 1U;
-  tx_header.TransmitGlobalTime = DISABLE;
-
-  if (HAL_CAN_AddTxMessage (hcan, &tx_header, tx_data, &tx_mailbox) != HAL_OK) {
+  if (CAN_Send (hcan, CAN_TEST_ID, tx_data, sizeof (tx_data)) != 0U) {
     can_recover_requested = 1;
     return 1;
   }
